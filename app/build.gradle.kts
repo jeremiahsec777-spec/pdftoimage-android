@@ -36,10 +36,6 @@ android {
     buildFeatures {
         compose = true
     }
-
-    testOptions {
-        unitTests.isIncludeAndroidResources = true
-    }
 }
 
 dependencies {
@@ -51,6 +47,7 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.8.3")
     implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.3")
     implementation("androidx.activity:activity-compose:1.9.0")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     // Compose
     implementation("androidx.compose.ui:ui")
@@ -69,10 +66,4 @@ dependencies {
 
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
-
-    // Testing
-    testImplementation("junit:junit:4.13.2")
-    testImplementation("org.robolectric:robolectric:4.12.2")
-    testImplementation("androidx.test.ext:junit:1.1.5")
-    testImplementation("androidx.test:core-ktx:1.5.0")
 }

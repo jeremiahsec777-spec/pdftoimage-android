@@ -1,7 +1,6 @@
 package com.pdftoimage.converter.ui.screens
 
 import android.graphics.Bitmap
-import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.*
@@ -9,6 +8,7 @@ import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.*
@@ -20,6 +20,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -32,11 +33,14 @@ import kotlinx.coroutines.withContext
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier) {
+fun ConverterScreen(
+    viewModel: ConverterViewModel,
+    modifier: Modifier = Modifier,
+    onNavigateToGallery: () -> Unit = {}
+) {
     val pdfFiles by viewModel.pdfFiles.collectAsStateWithLifecycle()
     val settings by viewModel.settings.collectAsStateWithLifecycle()
     val conversionState by viewModel.conversionState.collectAsStateWithLifecycle()
-    val outputFiles by viewModel.outputFiles.collectAsStateWithLifecycle()
     val selectedPdfIndex by viewModel.selectedPdfIndex.collectAsStateWithLifecycle()
 
     val context = LocalContext.current
@@ -53,12 +57,15 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
     val folderPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocumentTree(),
         onResult = { uri ->
-            // Logic to handle folder URIs could be added here
+            if (uri != null) {
+                viewModel.addFolderUri(uri)
+            }
         }
     )
 
     Scaffold(
         modifier = modifier,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 title = { Text("PDF to Image Converter") },
@@ -77,12 +84,12 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
         },
         floatingActionButton = {
             if (pdfFiles.any { it.isQueued } && conversionState is ConversionState.Idle) {
-                FloatingActionButton(
+                ExtendedFloatingActionButton(
                     onClick = { viewModel.startConversion() },
+                    icon = { Icon(Icons.Filled.PlayArrow, contentDescription = null) },
+                    text = { Text("Convert (${viewModel.getTotalQueuedPages()} pages)") },
                     containerColor = MaterialTheme.colorScheme.primary
-                ) {
-                    Icon(Icons.Filled.PlayArrow, contentDescription = "Start Conversion")
-                }
+                )
             }
         }
     ) { paddingValues ->
@@ -112,7 +119,7 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Icon(Icons.Filled.Add, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text("Add PDFs")
                             }
                             OutlinedButton(
@@ -120,18 +127,33 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
                                 modifier = Modifier.weight(1f)
                             ) {
                                 Icon(Icons.Filled.Folder, contentDescription = null)
-                                Spacer(modifier = Modifier.width(8.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
                                 Text("Add Folder")
                             }
                         }
                     }
 
+                    // Selected Document Large Preview Card
+                    if (selectedPdfIndex in pdfFiles.indices) {
+                        item {
+                            SelectedPdfPreviewCard(
+                                pdfFile = pdfFiles[selectedPdfIndex]
+                            )
+                        }
+                    }
+
                     item {
-                        Text(
-                            text = "Selected Files",
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = "Queue (${pdfFiles.count { it.isQueued }}/${pdfFiles.size} selected)",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
                     }
 
                     itemsIndexed(pdfFiles) { index, pdfFile ->
@@ -155,7 +177,7 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
                     }
 
                     item {
-                        Spacer(modifier = Modifier.height(72.dp)) // FAB spacing
+                        Spacer(modifier = Modifier.height(80.dp)) // FAB clearance
                     }
                 }
             }
@@ -167,8 +189,86 @@ fun ConverterScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier
                     onCancel = { viewModel.cancelConversion() },
                     onReset = { viewModel.resetState() },
                     onShareImages = { files -> ShareHelper.shareImages(context, files) },
-                    onShareZip = { zipFile -> ShareHelper.shareZip(context, zipFile) }
+                    onShareZip = { zipFile -> ShareHelper.shareZip(context, zipFile) },
+                    onViewGallery = {
+                        viewModel.resetState()
+                        onNavigateToGallery()
+                    }
                 )
+            }
+        }
+    }
+}
+
+@Composable
+fun SelectedPdfPreviewCard(pdfFile: PdfFile) {
+    val context = LocalContext.current
+    var previewBitmap by remember(pdfFile.uri) { mutableStateOf<Bitmap?>(null) }
+    var isLoading by remember(pdfFile.uri) { mutableStateOf(true) }
+
+    LaunchedEffect(pdfFile.uri) {
+        isLoading = true
+        withContext(Dispatchers.IO) {
+            val converter = PdfConverter(context)
+            previewBitmap = converter.renderThumbnail(pdfFile.uri, pageIndex = 0, maxWidth = 600)
+            isLoading = false
+        }
+    }
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+        ),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Preview: ${pdfFile.name}",
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f)
+                )
+                Badge {
+                    Text("Page 1 of ${pdfFile.pageCount}")
+                }
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(200.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center
+            ) {
+                if (isLoading) {
+                    CircularProgressIndicator(modifier = Modifier.size(32.dp))
+                } else if (previewBitmap != null) {
+                    Image(
+                        bitmap = previewBitmap!!.asImageBitmap(),
+                        contentDescription = "PDF Page Preview",
+                        modifier = Modifier.fillMaxSize()
+                    )
+                } else {
+                    Text(
+                        "Unable to preview page",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         }
     }
@@ -186,10 +286,10 @@ fun EmptyStateView(onAddFiles: () -> Unit, onAddFolder: () -> Unit) {
         Icon(
             imageVector = Icons.Outlined.PictureAsPdf,
             contentDescription = null,
-            modifier = Modifier.size(100.dp),
-            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)
+            modifier = Modifier.size(90.dp),
+            tint = MaterialTheme.colorScheme.primary.copy(alpha = 0.7f)
         )
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(20.dp))
         Text(
             text = "No PDFs Added",
             style = MaterialTheme.typography.headlineSmall,
@@ -197,19 +297,19 @@ fun EmptyStateView(onAddFiles: () -> Unit, onAddFolder: () -> Unit) {
         )
         Spacer(modifier = Modifier.height(8.dp))
         Text(
-            text = "Add some PDF files to start converting them to images.",
+            text = "Select one or multiple PDF documents, or pick an entire folder to batch convert.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = androidx.compose.ui.text.style.TextAlign.Center
         )
-        Spacer(modifier = Modifier.height(32.dp))
+        Spacer(modifier = Modifier.height(28.dp))
         Button(
             onClick = onAddFiles,
             modifier = Modifier.fillMaxWidth()
         ) {
             Icon(Icons.Filled.Add, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add PDF Files")
+            Text("Select PDF Files")
         }
         Spacer(modifier = Modifier.height(12.dp))
         OutlinedButton(
@@ -218,7 +318,7 @@ fun EmptyStateView(onAddFiles: () -> Unit, onAddFolder: () -> Unit) {
         ) {
             Icon(Icons.Filled.Folder, contentDescription = null)
             Spacer(modifier = Modifier.width(8.dp))
-            Text("Add Folder")
+            Text("Select Folder")
         }
     }
 }
@@ -237,7 +337,7 @@ fun PdfFileItem(
     LaunchedEffect(pdfFile.uri) {
         withContext(Dispatchers.IO) {
             val converter = PdfConverter(context)
-            thumbnail = converter.renderThumbnail(pdfFile.uri, 0, 300)
+            thumbnail = converter.renderThumbnail(pdfFile.uri, 0, 200)
         }
     }
 
@@ -246,25 +346,28 @@ fun PdfFileItem(
             .fillMaxWidth()
             .clickable(onClick = onSelect),
         colors = CardDefaults.cardColors(
-            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer else MaterialTheme.colorScheme.surfaceVariant
-        )
+            containerColor = if (isSelected) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+            else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f)
+        ),
+        border = if (isSelected) BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(12.dp),
+                .padding(10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Checkbox(
                 checked = pdfFile.isQueued,
                 onCheckedChange = { onToggleQueue() }
             )
-            Spacer(modifier = Modifier.width(8.dp))
+
+            Spacer(modifier = Modifier.width(4.dp))
 
             Box(
                 modifier = Modifier
-                    .size(60.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(54.dp)
+                    .clip(RoundedCornerShape(6.dp))
                     .background(MaterialTheme.colorScheme.surface),
                 contentAlignment = Alignment.Center
             ) {
@@ -288,14 +391,14 @@ fun PdfFileItem(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = pdfFile.name,
-                    style = MaterialTheme.typography.bodyLarge,
+                    style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
-                Spacer(modifier = Modifier.height(4.dp))
+                Spacer(modifier = Modifier.height(2.dp))
                 Text(
-                    text = "${pdfFile.pageCount} pages • ${ShareHelper.formatFileSize(pdfFile.size)}",
+                    text = "${pdfFile.pageCount} page(s) • ${ShareHelper.formatFileSize(pdfFile.size)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -321,6 +424,9 @@ fun SettingsCard(
     onQualityChange: (QualityPreset) -> Unit,
     onZipToggle: (Boolean) -> Unit
 ) {
+    var showCustomDpiDialog by remember { mutableStateOf(false) }
+    var customDpiText by remember { mutableStateOf(settings.dpi.toString()) }
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -332,21 +438,34 @@ fun SettingsCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(16.dp)
+            verticalArrangement = Arrangement.spacedBy(14.dp)
         ) {
             Text(
                 text = "Conversion Settings",
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.Bold
             )
-            
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Resolution (DPI)", style = MaterialTheme.typography.bodyMedium)
+
+            // Resolution DPI
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text("Resolution (DPI): ${settings.dpi}", style = MaterialTheme.typography.bodyMedium)
+                    TextButton(onClick = {
+                        customDpiText = settings.dpi.toString()
+                        showCustomDpiDialog = true
+                    }) {
+                        Text("Custom DPI")
+                    }
+                }
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.horizontalScroll(rememberScrollState())
                 ) {
-                    val presets = listOf(72, 150, 300, 600)
+                    val presets = listOf(72, 150, 200, 300, 400, 600)
                     presets.forEach { dpi ->
                         FilterChip(
                             selected = settings.dpi == dpi,
@@ -357,8 +476,9 @@ fun SettingsCard(
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Format", style = MaterialTheme.typography.bodyMedium)
+            // Image Format
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Image Format", style = MaterialTheme.typography.bodyMedium)
                 Row(
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                     modifier = Modifier.horizontalScroll(rememberScrollState())
@@ -367,40 +487,97 @@ fun SettingsCard(
                         FilterChip(
                             selected = settings.format == format,
                             onClick = { onFormatChange(format) },
-                            label = { Text(format.name) }
+                            label = { Text(format.displayName) }
                         )
                     }
                 }
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Quality", style = MaterialTheme.typography.bodyMedium)
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.horizontalScroll(rememberScrollState())
+            // Quality (Hide or grey out if PNG is selected, as PNG is lossless)
+            if (settings.format != ImageFormat.PNG) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text("Compression Quality", style = MaterialTheme.typography.bodyMedium)
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        modifier = Modifier.horizontalScroll(rememberScrollState())
+                    ) {
+                        QualityPreset.entries.forEach { quality ->
+                            FilterChip(
+                                selected = settings.qualityPreset == quality,
+                                onClick = { onQualityChange(quality) },
+                                label = { Text(quality.label) }
+                            )
+                        }
+                    }
+                }
+            } else {
+                Surface(
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(8.dp)
                 ) {
-                    QualityPreset.entries.forEach { quality ->
-                        FilterChip(
-                            selected = settings.qualityPreset == quality,
-                            onClick = { onQualityChange(quality) },
-                            label = { Text(quality.name) }
-                        )
-                    }
+                    Text(
+                        text = "PNG is lossless: output preserves 100% vector fidelity without compression artifacts.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(10.dp)
+                    )
                 }
             }
 
+            // ZIP Toggle
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Text("Create ZIP archive", style = MaterialTheme.typography.bodyMedium)
+                Column {
+                    Text("Package as ZIP archive", style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        "Bundle all converted pages into a single .zip",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
                 Switch(
                     checked = settings.createZip,
                     onCheckedChange = { onZipToggle(it) }
                 )
             }
         }
+    }
+
+    if (showCustomDpiDialog) {
+        AlertDialog(
+            onDismissRequest = { showCustomDpiDialog = false },
+            title = { Text("Set Custom DPI") },
+            text = {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("Enter DPI resolution between 72 and 1200:")
+                    OutlinedTextField(
+                        value = customDpiText,
+                        onValueChange = { customDpiText = it },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        singleLine = true
+                    )
+                }
+            },
+            confirmButton = {
+                Button(onClick = {
+                    val parsed = customDpiText.toIntOrNull()
+                    if (parsed != null && parsed in 72..1200) {
+                        onDpiChange(parsed)
+                        showCustomDpiDialog = false
+                    }
+                }) {
+                    Text("Apply")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showCustomDpiDialog = false }) {
+                    Text("Cancel")
+                }
+            }
+        )
     }
 }
 
@@ -410,7 +587,8 @@ fun ConversionOverlay(
     onCancel: () -> Unit,
     onReset: () -> Unit,
     onShareImages: (List<java.io.File>) -> Unit,
-    onShareZip: (java.io.File) -> Unit
+    onShareZip: (java.io.File) -> Unit,
+    onViewGallery: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -438,11 +616,11 @@ fun ConversionOverlay(
                     when (conversionState) {
                         is ConversionState.Converting -> {
                             Text(
-                                "Converting...",
+                                "Converting Documents",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
-                            
+
                             Text(
                                 "File: ${conversionState.currentFile}",
                                 style = MaterialTheme.typography.bodyMedium,
@@ -455,29 +633,32 @@ fun ConversionOverlay(
                             } else {
                                 0f
                             }
-                            
+
                             LinearProgressIndicator(
                                 progress = { progress },
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .height(8.dp)
-                                    .clip(RoundedCornerShape(4.dp))
+                                    .height(10.dp)
+                                    .clip(RoundedCornerShape(5.dp))
                             )
 
                             Text(
-                                "${conversionState.processedPages} of ${conversionState.totalPages} pages",
+                                "${conversionState.processedPages} of ${conversionState.totalPages} pages completed (${(progress * 100).toInt()}%)",
                                 style = MaterialTheme.typography.bodySmall
                             )
 
-                            Button(
+                            OutlinedButton(
                                 onClick = onCancel,
-                                colors = ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.error
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.error
                                 )
                             ) {
-                                Text("Cancel")
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Cancel Conversion")
                             }
                         }
+
                         is ConversionState.Completed -> {
                             Icon(
                                 Icons.Filled.CheckCircle,
@@ -486,13 +667,14 @@ fun ConversionOverlay(
                                 modifier = Modifier.size(64.dp)
                             )
                             Text(
-                                "Conversion Complete",
+                                "Conversion Complete!",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                "Successfully converted ${conversionState.totalPages} pages.",
-                                style = MaterialTheme.typography.bodyMedium
+                                "Converted ${conversionState.totalPages} page(s) successfully.\nSaved to Pictures/PDFToImage & Gallery.",
+                                style = MaterialTheme.typography.bodyMedium,
+                                textAlign = androidx.compose.ui.text.style.TextAlign.Center
                             )
 
                             if (conversionState.zipFile != null) {
@@ -504,24 +686,36 @@ fun ConversionOverlay(
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text("Share ZIP Archive")
                                 }
-                            } else if (conversionState.outputFiles.isNotEmpty()) {
+                            }
+
+                            if (conversionState.outputFiles.isNotEmpty()) {
                                 Button(
                                     onClick = { onShareImages(conversionState.outputFiles) },
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
                                     Icon(Icons.Filled.Share, contentDescription = null)
                                     Spacer(modifier = Modifier.width(8.dp))
-                                    Text("Share Images")
+                                    Text("Share Images (${conversionState.outputFiles.size})")
                                 }
                             }
 
-                            OutlinedButton(
+                            FilledTonalButton(
+                                onClick = onViewGallery,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Icon(Icons.Default.PhotoLibrary, contentDescription = null)
+                                Spacer(modifier = Modifier.width(8.dp))
+                                Text("View in Gallery")
+                            }
+
+                            TextButton(
                                 onClick = onReset,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Text("Done")
                             }
                         }
+
                         is ConversionState.Error -> {
                             Icon(
                                 Icons.Filled.Error,
@@ -530,7 +724,7 @@ fun ConversionOverlay(
                                 modifier = Modifier.size(64.dp)
                             )
                             Text(
-                                "Conversion Failed",
+                                "Conversion Error",
                                 style = MaterialTheme.typography.titleLarge,
                                 fontWeight = FontWeight.Bold
                             )
@@ -544,11 +738,11 @@ fun ConversionOverlay(
                                 onClick = onReset,
                                 modifier = Modifier.fillMaxWidth()
                             ) {
-                                Text("Close")
+                                Text("Dismiss")
                             }
                         }
-                        else -> {
-                        }
+
+                        else -> { }
                     }
                 }
             }

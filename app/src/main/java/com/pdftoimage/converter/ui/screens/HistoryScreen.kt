@@ -5,15 +5,16 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.History
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
-import com.pdftoimage.converter.data.ConversionRecord
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pdftoimage.converter.data.ConversionJobEntity
 import com.pdftoimage.converter.ui.ConverterViewModel
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -22,15 +23,16 @@ import java.util.Locale
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun HistoryScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier) {
-    val historyRecords by viewModel.historyRecords.collectAsState(initial = emptyList())
+    val historyJobs by viewModel.historyJobs.collectAsStateWithLifecycle(initialValue = emptyList())
 
     Scaffold(
         modifier = modifier,
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
-                title = { Text("Conversion History") },
+                title = { Text("Conversion History (${historyJobs.size})") },
                 actions = {
-                    if (historyRecords.isNotEmpty()) {
+                    if (historyJobs.isNotEmpty()) {
                         TextButton(onClick = { viewModel.clearHistory() }) {
                             Text("Clear All")
                         }
@@ -39,17 +41,29 @@ fun HistoryScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier) 
             )
         }
     ) { paddingValues ->
-        if (historyRecords.isEmpty()) {
+        if (historyJobs.isEmpty()) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(paddingValues),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "No history available.",
-                    style = MaterialTheme.typography.bodyLarge
-                )
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
+                    Text(
+                        text = "No conversion history yet.",
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
             }
         } else {
             LazyColumn(
@@ -57,10 +71,13 @@ fun HistoryScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier) 
                     .fillMaxSize()
                     .padding(paddingValues),
                 contentPadding = PaddingValues(16.dp),
-                verticalArrangement = Arrangement.spacedBy(8.dp)
+                verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                items(historyRecords, key = { it.id }) { record ->
-                    HistoryItem(record = record, onDelete = { viewModel.deleteHistoryRecord(record.id) })
+                items(historyJobs, key = { it.id }) { job ->
+                    HistoryItem(
+                        job = job,
+                        onDelete = { viewModel.deleteHistoryJob(job.id) }
+                    )
                 }
             }
         }
@@ -68,7 +85,7 @@ fun HistoryScreen(viewModel: ConverterViewModel, modifier: Modifier = Modifier) 
 }
 
 @Composable
-fun HistoryItem(record: ConversionRecord, onDelete: () -> Unit) {
+fun HistoryItem(job: ConversionJobEntity, onDelete: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth(),
         elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
@@ -82,18 +99,18 @@ fun HistoryItem(record: ConversionRecord, onDelete: () -> Unit) {
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = record.pdfName,
+                    text = job.pdfName,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = "Pages: ${record.pageCount} • ${record.dpi} DPI • ${record.format}",
+                    text = "${job.pageCount} page(s) • ${job.dpi} DPI • ${job.format} (${job.quality}%)",
                     style = MaterialTheme.typography.bodyMedium
                 )
                 Spacer(modifier = Modifier.height(4.dp))
                 Text(
-                    text = formatDate(record.timestamp),
+                    text = formatDate(job.timestamp),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )

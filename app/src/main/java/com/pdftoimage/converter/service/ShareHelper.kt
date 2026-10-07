@@ -1,7 +1,9 @@
 package com.pdftoimage.converter.service
 
+import android.content.ClipData
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import androidx.core.content.FileProvider
 import java.io.File
 
@@ -22,6 +24,7 @@ object ShareHelper {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = mimeType
             putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(context.contentResolver, file.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share ${file.name}"))
@@ -34,13 +37,23 @@ object ShareHelper {
             return
         }
 
-        val uris = files.map { file ->
-            FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        val uris = ArrayList<Uri>()
+        var clipData: ClipData? = null
+
+        for (file in files) {
+            val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+            uris.add(uri)
+            if (clipData == null) {
+                clipData = ClipData.newUri(context.contentResolver, file.name, uri)
+            } else {
+                clipData.addItem(ClipData.Item(uri))
+            }
         }
 
         val intent = Intent(Intent.ACTION_SEND_MULTIPLE).apply {
             type = "image/*"
-            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+            this.clipData = clipData
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share ${files.size} images"))
@@ -55,6 +68,7 @@ object ShareHelper {
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "application/zip"
             putExtra(Intent.EXTRA_STREAM, uri)
+            clipData = ClipData.newUri(context.contentResolver, zipFile.name, uri)
             addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share ${zipFile.name}"))
